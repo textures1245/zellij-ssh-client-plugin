@@ -1,0 +1,36 @@
+ssh_servers.conf
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# Logs and databases
+*.log
+*.sql
+*.sqlite
+
+# Environment files
+.env
+.env.local
+.env.*
+
+# Build and package files
+node_modules/
+dist/
+build/
+*.tar.gz
+*.zip
