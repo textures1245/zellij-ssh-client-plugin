@@ -2,6 +2,8 @@
 
 A powerful terminal-based SSH and SFTP client leveraging Zellij terminal multiplexer with password authentication, fuzzy server selection, and automatic root elevation.
 
+![SSH/SFTP Client Plugin Interface](https://files.catbox.moe/5ve4su.png)
+
 ## Features
 
 - **Simple Server Configuration**: Store server details in a single configuration file
