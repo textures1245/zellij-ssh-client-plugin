@@ -96,47 +96,49 @@ if [ -n "$selected" ]; then
                     EXPECT_SCRIPT=$(mktemp)
                     cat >"$EXPECT_SCRIPT" <<EOF
 #!/usr/bin/expect -f
-# This script handles both SSH login and sudo elevation automatically
+# This script handles both SSH login and sudo elevation with support for passwordless auth
 set timeout 30
-
-# Debug mode for troubleshooting
-exp_internal 0
 
 # Start the SSH connection
 spawn ssh $port_option $username@$host
 
-# Handle the password prompt for SSH
+# First handle SSH login with or without password
 expect {
     "Password:" { send "$password\r"; exp_continue }
     "password:" { send "$password\r"; exp_continue }
     "yes/no" { send "yes\r"; exp_continue }
-    "*\\\$*" { send "sudo su -\r" }
-    "*>*" { send "sudo su -\r" }
-    "*#*" { send "sudo su -\r" }
+    "*\\\$*" { }  # Just continue if we get a shell prompt
+    "*>*" { }     # Just continue for Windows/PowerShell prompts
+    "*#*" { }     # Already root prompt
     timeout { puts "Timeout waiting for prompt"; exit 1 }
 }
 
-# Handle the sudo password prompt
+# Now try sudo, with flexible prompt handling
+send "sudo su -\r"
+
+# Handle sudo - could be passwordless
 expect {
-    "*assword*" { send "$password\r" }
-    "*ASSWD*" { send "$password\r" }
-    timeout { puts "Timeout waiting for sudo password prompt"; exit 1 }
+    "*assword*" { send "$password\r"; exp_continue }
+    "*ASSWD*" { send "$password\r"; exp_continue }
+    "*root*" { }  # Already got root prompt
+    "*#*" { }     # Already got root prompt
+    timeout { }   # Just continue if passwordless sudo
 }
 
-# Set the command prompt environment variable to help expect identify the prompt
-expect {
-    "*root*" { send "export PS1='\\u@\\h:\\w\\$ '\r" }
-    "*#*" { send "export PS1='\\u@\\h:\\w\\$ '\r" }
-    timeout { puts "Timeout waiting for root prompt"; exit 1 }
-}
+# Set the command prompt regardless of how we got here
+send "export PS1='\\u@\\h:\\w\\$ '\r"
+
+# Disable timeout before entering interactive mode
+set timeout -1
 
 # Now we should be at root prompt, hand control back to user
 interact
 EOF
+
                     chmod +x "$EXPECT_SCRIPT"
 
-                    # Run the expect script
-                    "$EXPECT_SCRIPT"
+                    # Run the expect script explicitly with expect
+                    expect "$EXPECT_SCRIPT"
 
                     # Clean up when done
                     rm -f "$EXPECT_SCRIPT"
