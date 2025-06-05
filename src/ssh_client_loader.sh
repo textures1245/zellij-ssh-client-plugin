@@ -64,6 +64,14 @@ fi
 # USE_CURRENT_PANE=1
 # ROOT_ACCESS=1
 
+# Function to URL decode a string
+url_decode() {
+    local encoded="$1"
+    # Handle URL percent encoding
+    decoded=$(printf '%b' "${encoded//%/\\x}")
+    echo "$decoded"
+}
+
 # Select server using fzf
 selected=$(printf "%s\n" "${SERVERS[@]}" | cut -d':' -f1 | fzf)
 
@@ -72,10 +80,21 @@ if [ -n "$selected" ]; then
     for server in "${SERVERS[@]}"; do
         name=$(echo "$server" | cut -d':' -f1)
         if [ "$name" = "$selected" ]; then
-            # Extract connection details
-            username=$(echo "$server" | cut -d':' -f2)
-            password=$(echo "$server" | cut -d':' -f3 | cut -d'@' -f1)
+            # Extract connection details with proper handling of URL-encoded passwords
+            # Format: name:username:password@host:port
+            # First split by '@' to separate credentials from host
+            credentials_part=$(echo "$server" | cut -d'@' -f1)
             host_part=$(echo "$server" | cut -d'@' -f2)
+            
+            # Extract username (second field)
+            username=$(echo "$credentials_part" | cut -d':' -f2)
+            
+            # Extract password (everything after second colon, before @)
+            # This handles passwords with colons by taking everything from the 3rd field onwards
+            password_encoded=$(echo "$credentials_part" | cut -d':' -f3-)
+            
+            # URL decode the password
+            password=$(url_decode "$password_encoded")
 
             # Check if port is specified
             if [[ "$host_part" =~ .*:.* ]]; then
@@ -94,39 +113,123 @@ if [ -n "$selected" ]; then
                 if [ "$ROOT_ACCESS" -eq 1 ]; then
                     # Create an expect script to handle the interactive SSH+sudo session
                     EXPECT_SCRIPT=$(mktemp)
-                    cat >"$EXPECT_SCRIPT" <<EOF
+                    cat >"$EXPECT_SCRIPT" <<'EOF'
 #!/usr/bin/expect -f
 # This script handles both SSH login and sudo elevation with support for passwordless auth
 set timeout 30
 
+# Set password variable to avoid special character issues
+set password [lindex $argv 0]
+set username [lindex $argv 1]
+set host [lindex $argv 2]
+set port_option [lindex $argv 3]
+
 # Start the SSH connection
-spawn ssh $port_option $username@$host
+if {$port_option eq ""} {
+    spawn ssh $username@$host
+} else {
+    spawn ssh $port_option $username@$host
+}
 
 # First handle SSH login with or without password
 expect {
-    "Password:" { send "$password\r"; exp_continue }
-    "password:" { send "$password\r"; exp_continue }
-    "yes/no" { send "yes\r"; exp_continue }
-    "*\\\$*" { }  # Just continue if we get a shell prompt
-    "*>*" { }     # Just continue for Windows/PowerShell prompts
-    "*#*" { }     # Already root prompt
-    timeout { puts "Timeout waiting for prompt"; exit 1 }
+    -re "Password:|password:|assword" { 
+        send "$password\r"
+        exp_continue 
+    }
+    "yes/no" { 
+        send "yes\r"
+        exp_continue 
+    }
+    -re {\$[ ]*$} { 
+        # User shell prompt - continue to sudo
+    }
+    -re {>[ ]*$} { 
+        # PowerShell prompt - continue to sudo
+    }
+    -re {#[ ]*$} { 
+        # Already root - skip sudo and go to interact
+        set timeout -1
+        interact
+        exit 0
+    }
+    timeout { 
+        puts "Timeout waiting for SSH login"
+        exit 1 
+    }
+    eof { 
+        puts "Connection closed unexpectedly"
+        exit 1 
+    }
 }
 
-# Now try sudo, with flexible prompt handling
+# Wait a moment for shell to be ready
+sleep 1
+
+# Now try sudo su - for root access
 send "sudo su -\r"
 
-# Handle sudo - could be passwordless
+# Handle various sudo prompts and responses
 expect {
-    "*assword*" { send "$password\r"; exp_continue }
-    "*ASSWD*" { send "$password\r"; exp_continue }
-    "*root*" { }  # Already got root prompt
-    "*#*" { }     # Already got root prompt
-    timeout { }   # Just continue if passwordless sudo
+    -re "Password:|password:|assword|ASSWD" { 
+        send "$password\r"
+        expect {
+            -re {#[ ]*$} { 
+                # Successfully got root prompt
+                send "export PS1='\[\\u@\\h \\W\]# '\r"
+                expect -re {#[ ]*$}
+            }
+            -re {\$[ ]*$} { 
+                puts "Sudo failed - still in user shell"
+                send "exit\r"
+                exit 1
+            }
+            timeout { 
+                puts "Timeout after entering sudo password"
+                exit 1
+            }
+        }
+    }
+    -re {#[ ]*$} { 
+        # Already got root prompt (passwordless sudo)
+        send "export PS1='\[\\u@\\h \\W\]# '\r"
+        expect -re {#[ ]*$}
+    }
+    -re {\$[ ]*$} { 
+        puts "Sudo command failed or not allowed"
+        send "exit\r"
+        exit 1
+    }
+    "Sorry*" { 
+        puts "Sudo access denied"
+        send "exit\r"
+        exit 1
+    }
+    timeout { 
+        puts "Timeout waiting for sudo response"
+        exit 1
+    }
+    eof { 
+        puts "Connection closed during sudo attempt"
+        exit 1
+    }
 }
 
-# Set the command prompt regardless of how we got here
-send "export PS1='\\u@\\h:\\w\\$ '\r"
+# Verify we're actually root by checking whoami
+send "whoami\r"
+expect {
+    "*root*" { 
+        puts "Successfully elevated to root"
+    }
+    "*$username*" { 
+        puts "Failed to elevate to root - still as user"
+        send "exit\r"
+        exit 1
+    }
+    timeout { 
+        puts "Could not verify root access"
+    }
+}
 
 # Disable timeout before entering interactive mode
 set timeout -1
@@ -137,8 +240,8 @@ EOF
 
                     chmod +x "$EXPECT_SCRIPT"
 
-                    # Run the expect script explicitly with expect
-                    expect "$EXPECT_SCRIPT"
+                    # Run the expect script explicitly with expect, passing parameters
+                    expect "$EXPECT_SCRIPT" "$password" "$username" "$host" "$port_option"
 
                     # Clean up when done
                     rm -f "$EXPECT_SCRIPT"
