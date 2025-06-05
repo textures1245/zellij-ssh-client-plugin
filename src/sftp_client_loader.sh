@@ -47,6 +47,14 @@ fi
 # Use current pane or not (0 = new tab, 1 = current pane)
 # USE_CURRENT_PANE=1
 
+# Function to URL decode a string
+url_decode() {
+    local encoded="$1"
+    # Handle URL percent encoding
+    decoded=$(printf '%b' "${encoded//%/\\x}")
+    echo "$decoded"
+}
+
 # Select server using fzf
 selected=$(printf "%s\n" "${SERVERS[@]}" | cut -d':' -f1 | fzf)
 
@@ -55,11 +63,21 @@ if [ -n "$selected" ]; then
     for server in "${SERVERS[@]}"; do
         name=$(echo "$server" | cut -d':' -f1)
         if [ "$name" = "$selected" ]; then
-            # Extract connection details
-            # Format: hostname:username:password@host:port
-            username=$(echo "$server" | cut -d':' -f2)
-            password=$(echo "$server" | cut -d':' -f3 | cut -d'@' -f1)
+            # Extract connection details with proper handling of URL-encoded passwords
+            # Format: name:username:password@host:port
+            # First split by '@' to separate credentials from host
+            credentials_part=$(echo "$server" | cut -d'@' -f1)
             host_part=$(echo "$server" | cut -d'@' -f2)
+            
+            # Extract username (second field)
+            username=$(echo "$credentials_part" | cut -d':' -f2)
+            
+            # Extract password (everything after second colon, before @)
+            # This handles passwords with colons by taking everything from the 3rd field onwards
+            password_encoded=$(echo "$credentials_part" | cut -d':' -f3-)
+            
+            # URL decode the password
+            password=$(url_decode "$password_encoded")
 
             # Format for midnight commander: sftp://username:password@host:port/
 
