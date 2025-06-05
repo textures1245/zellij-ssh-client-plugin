@@ -64,8 +64,25 @@ SERVERS=(
     "server-name:username:password@hostname:22"
     "another-server:username:password@192.168.1.10"
     "custom-port:username:password@example.com:2222"
+    
+    # For passwords with special characters (: ; @ etc.), use URL encoding
+    "special-chars:username:my%3Apassword%3Bwith%40symbols@example.com:22"
 )
 ```
+
+#### Password with Special Characters
+
+If your password contains special characters that conflict with the configuration format (like `:`, `;`, `@`), you need to URL-encode those characters:
+
+- `:` becomes `%3A`
+- `;` becomes `%3B` 
+- `@` becomes `%40`
+- `%` becomes `%25`
+
+**Example:**
+- Original password: `se221:nhk;045`
+- URL-encoded: `se221%3Anhk;045`
+- Server entry: `"server:username:se221%3Anhk;045@192.428.1.100"`
 
 ### Client Settings
 
@@ -125,6 +142,18 @@ zellij run {YOUR_CONFIG_DIR/src/ssh_client_loader.sh} clean
 
 - **Authentication Method**: Currently supports only username-password authentication. Key-based authentication and other SSH authentication methods are not yet implemented.
 - **Connection Parameters**: Limited to basic connection parameters only (server hostname, username, password, IP address, and port). Advanced SSH options are not supported.
+
+## Changelog
+
+### Recent Updates
+
+#### URL Encoding Support for Special Characters in Passwords
+- **Added URL decoding functionality** to both SSH and SFTP clients
+- **Enhanced password parsing** to properly handle passwords containing special characters (`:`, `;`, `@`, etc.)
+- **Improved sudo elevation** in SSH client with better expect script handling for complex passwords
+- **Fixed expect script issues** with special character handling by using proper parameter passing
+
+**Migration:** If your passwords contain special characters, update your `ssh_servers.conf` entries to use URL-encoded passwords. The clients will automatically decode them during connection.
 
 ## Security Considerations
 
